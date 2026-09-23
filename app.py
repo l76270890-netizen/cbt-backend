@@ -9,10 +9,8 @@ import secrets
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', secrets.token_hex(32))
 
-# ALLOW ALL ORIGINS - for Vercel frontend
 CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
-# DB CONFIG - Render will use sqlite for now
 basedir = os.path.abspath(os.path.dirname(__file__))
 db_path = os.environ.get('DATABASE_URL')
 if db_path and db_path.startswith("postgres"):
@@ -72,31 +70,13 @@ class CBTResult(db.Model):
     examType = db.Column(db.String(80))
     date = db.Column(db.DateTime, default=datetime.utcnow)
 
+# NO MORE HARD CODED EXAMS - Only create tables
+
 
 def init_db():
     with app.app_context():
         db.create_all()
-        if not Exam.query.first():
-            exam1 = Exam(title="JAMB 2024 Mock", examType="JAMB",
-                         subject="Use of English,Mathematics,Biology,Chemistry", year=2024, duration=120, totalQuestions=40)
-            exam2 = Exam(title="WAEC 2023 Practice", examType="WAEC",
-                         subject="Physics", year=2023, duration=60, totalQuestions=20)
-            exam3 = Exam(title="General Knowledge", examType="GENERAL",
-                         subject="General Knowledge", year=2024, duration=30, totalQuestions=20)
-            db.session.add_all([exam1, exam2, exam3])
-            db.session.commit()
-            db.session.add_all([
-                Question(examId=exam1.id, examType="JAMB", subject="Use of English", question="What is a noun?", options={
-                         "A": "Name of person", "B": "Action", "C": "Color", "D": "None"}, answer="A", explanation="Noun is name"),
-                Question(examId=exam1.id, examType="JAMB", subject="Mathematics", question="2+2 =?",
-                         options={"A": "3", "B": "4", "C": "5", "D": "6"}, answer="B", explanation="Basic math"),
-                Question(examId=exam3.id, examType="GENERAL", subject="General Knowledge", question="Capital of Nigeria?", options={
-                         "A": "Lagos", "B": "Abuja", "C": "Kano", "D": "Ibadan"}, answer="B", explanation="Abuja is capital"),
-                Question(examId=exam3.id, examType="GENERAL", subject="General Knowledge", question="Nigeria independence year?", options={
-                         "A": "1960", "B": "1963", "C": "1970", "D": "1959"}, answer="A", explanation="1960"),
-            ])
-            db.session.commit()
-            print("✅ Database seeded")
+        print("✅ Database ready - empty")
 
 
 init_db()
@@ -105,8 +85,6 @@ init_db()
 @app.route('/')
 def home():
     return jsonify(message="CBT Backend is LIVE", status="ok", endpoints=["/api/exams", "/api/questions", "/api/login"])
-
-# --- YOUR ROUTES (same as before) ---
 
 
 @app.route('/api/register', methods=['POST'])
@@ -155,7 +133,10 @@ def get_questions():
     examType = request.args.get('examType')
     subject = request.args.get('subject')
     subjects = request.args.get('subjects')
+    examId = request.args.get('examId')
     q = Question.query
+    if examId:
+        q = q.filter(Question.examId == int(examId))
     if examType:
         q = q.filter(Question.examType.ilike(f"%{examType}%"))
     if subject:
@@ -244,10 +225,15 @@ def manage_exam(exam_id):
     if not exam:
         return jsonify(message="Not found"), 404
     if request.method == 'DELETE':
-        Question.query.filter_by(examId=exam_id).delete()
-        db.session.delete(exam)
-        db.session.commit()
-        return jsonify(success=True)
+        try:
+            Question.query.filter_by(examId=exam_id).delete(
+                synchronize_session=False)
+            db.session.delete(exam)
+            db.session.commit()
+            return jsonify(success=True, message="Deleted permanently"), 200
+        except Exception as e:
+            db.session.rollback()
+            return jsonify(message=str(e)), 500
     data = request.json
     if 'title' in data:
         exam.title = data['title']
